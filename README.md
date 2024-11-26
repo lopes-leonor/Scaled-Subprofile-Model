@@ -23,7 +23,7 @@ They can represent:
 - neuroanatomical/functional brain networks - interconected brain regions
 - involvement of brain regions in a given clinical/neuropathological condition
 
-<img src="https://github.com/lopes-leonor/DAT-cycle-gan/blob/main/images/PC_0.png" width="800" alt="Parkinson's Disease Related Pattern">
+<img src="https://github.com/lopes-leonor/Scaled-Subprofile-Model/blob/main/images/PC_0.png" width="800" alt="Parkinson's Disease Related Pattern">
 Parkinson's Disease Related Pattern<br>
 <br>
 
