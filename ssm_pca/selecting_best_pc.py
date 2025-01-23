@@ -7,66 +7,109 @@ from scipy.stats import ttest_ind
 from sklearn.metrics import roc_auc_score, RocCurveDisplay, log_loss
 from sklearn.linear_model import LogisticRegression
 
-from visualization import plot_comparisons
-from voxel_pattern_analysis import get_scores_discovery_set, reshape_eigenvector_to_3d
+from ssm_pca.utils import reshape_eigenvector_to_3d, reshape_eigenvector_to_roi
+from ssm_pca.visualization import plot_comparisons
 
 
-def best_aic(df):
-    pcs = list(df['PC'].unique())
+def best_pc_combination(df, vaf=None, save_dir=None):
 
+    df_temp = df.copy()
+
+    pcs = list(df_temp['PC'].unique())
+
+    # Get all possible combinations
     all_combinations = []
     for r in range(1, len(pcs) + 1):
         all_combinations.extend(combinations(range(len(pcs)), r))
 
     aics = dict()
+    vafs_dict = dict()
+    p_dict = dict()
+    coefs_dict = dict()
+    resulting_scores_dict = dict()
 
+    labels = list(df_temp[df_temp['PC'] == 0]['labels'])
+    filepaths = list(df_temp[df_temp['PC'] == 0]['filepaths'])
+
+    # Iterate over the different combinations
     for combination in all_combinations:
         scores_comb = []
+        vafs = []
+    
         for i in combination:
-            df_i = df[df['PC'] == i]
-            scores_i = list(df_i['norm_scores'])
+            df_i = df_temp[df_temp['PC'] == i]
+            scores_i = list(df_i['scores'])
             scores_comb.append(scores_i)
+            vafs.append(vaf[i])
 
         scores = np.array(scores_comb).T
-        labels = list(df_i['labels'])
 
+        # Fit logistic regression model
         logistic_model = LogisticRegression()
         logistic_model.fit(scores, labels)
+        coefs = logistic_model.coef_.flatten()
+
+        # Normalize coefficients
+        coefs_normalized = coefs / np.sqrt(np.sum(coefs ** 2))
+        coefs_dict[combination] = coefs_normalized
+
+        # Get combination scores
+        resulting_scores = scores @ coefs_normalized
+
+        # Save resulting scores
+        resulting_scores_dict[combination] = resulting_scores
+        comb_list = [combination] * len(filepaths)
+        df_resulting_scores = pd.DataFrame({'filepaths': filepaths, 'labels': labels, 'scores': resulting_scores, 'PC': comb_list})
+        df_temp = pd.concat([df_temp, df_resulting_scores])
+
+        # Compare current combination scores
+        p = compare_scores_normal_disease(df_resulting_scores, combination, labels, save_dir)
+        p_dict[combination] = p
+
+        # Compute Vaf 
+        tvaf = np.sum((coefs_normalized ** 2) * np.array(vafs))
+        vafs_dict[combination] = tvaf
+
+        # Compute AIC
         aic = compute_aic(logistic_model, scores, labels)
         aics[combination] = aic
 
-    df = pd.DataFrame([aics])
+        vafs.clear()
+        scores_comb.clear()
 
-    return df
+    
+    df_aics = pd.DataFrame([aics])
+    df_vafs = pd.DataFrame([vafs_dict])
+    df_p = pd.DataFrame([p_dict])
 
-
-def comparisons_scores_normal_disease(df, save_dir):
-
-    pcs = df['PC'].unique()
-
-    for pc in pcs:
-        df_temp = df[df['PC'] == pc]
-
-        all_scores = df_temp['norm_scores'].to_numpy()
-        labels = df_temp['labels'].to_numpy()
-
-        normal = df_temp[df_temp['labels'] == 0]['scores']
-        disease = df_temp[df_temp['labels'] == 1]['scores']
-
-        #Do comparisons between normal controls and diseased
-        _, p = ttest_ind(normal, disease)
-        plot_comparisons(normal, disease, 'Controls', 'Disease', pc, save_dir=save_dir)
-
-        auc = roc_auc_score(labels, all_scores)
-        RocCurveDisplay.from_predictions(labels, all_scores, name=f'PC{pc} - AUC = {auc:3f}')
-        plt.title(f'PC: {pc}')
-        if save_dir:
-            plt.savefig(save_dir + f'/ROC_PC{pc}.png')
-
-        plt.plot()
+    return df_aics, df_vafs, df_p, df_temp, coefs_dict
 
 
 
+def compare_scores_normal_disease(df, pc, labels, save_dir=None):
+    
+    all_scores = df['scores'].to_numpy()
+    labels = np.array(labels)
+
+    normal = df[df['labels'] == 0]['scores']
+    disease = df[df['labels'] == 1]['scores']
+
+    #Do comparisons between normal controls and diseased
+    _, p = ttest_ind(normal, disease)
+    plot_comparisons(normal, disease, 'Controls', 'Disease', pc, save_dir=save_dir + '/plots/')
+
+    auc = roc_auc_score(labels, all_scores)
+    RocCurveDisplay.from_predictions(labels, all_scores, name=f'PC{pc} - AUC = {auc:3f}')
+    plt.title(f'PC: {pc}')
+
+    if save_dir:
+        plt.savefig(save_dir + f'plots/ROC_PC{pc}.png')
+
+    plt.plot()
+    plt.show(block=False)
+    plt.close()
+
+    return p
 
 
 def compute_aic(model, X, y):
@@ -91,41 +134,6 @@ def compute_aic(model, X, y):
     aic = 2 * k - 2 * log_likelihood
     return aic
 
-# def evaluate_pcs_with_aic(score_vectors, labels, max_components=10):
-#     """
-#     Evaluate combinations of principal components to determine the model with the lowest AIC.
-#
-#     Parameters:
-#     - score_vectors: The matrix of principal component scores
-#     - labels: The target labels (patients vs. controls)
-#     - max_components: The maximum number of components to consider (default is 10)
-#
-#     Returns:
-#     - best_model: The logistic regression model with the lowest AIC
-#     - best_components: The list of component indices for the best model
-#     - best_aic: The AIC value of the best model
-#     """
-#     best_aic = np.inf
-#     best_model = None
-#     best_components = None
-#
-#     # Try different combinations of principal components
-#     for num_components in range(1, max_components + 1):
-#         for combination in itertools.combinations(range(score_vectors.shape[1]), num_components):
-#             X = score_vectors[:, combination]
-#
-#             model = LogisticRegression().fit(X, labels)
-#             aic = compute_aic(model, X, labels)
-#
-#             if aic < best_aic:
-#                 best_aic = aic
-#                 best_model = model
-#                 best_components = combination
-#
-#
-#     print(best_components)
-#
-#     return best_model, best_components, best_aic
 
 def normalize_vectors(vectors):
     """
@@ -161,17 +169,56 @@ def determine_coefficients(scores, labels):
     return coefficient, aic
 
 
-def linearly_combine_vectors(normalized_gis, coeff_dict, combination):
+def linearly_combine_vectors(normalized_gis, coefs, combination):
     # Initialize the result as a zero vector with the same length as the number of rows in gis
     result_vector = np.zeros(normalized_gis.shape[0])
 
     # Linearly combine the normalized vectors with the current permutation of coefficients
-    for pc in combination:
-        result_vector += coeff_dict.get(pc) * normalized_gis[:, pc]
+    for i, pc in enumerate(combination):
+        result_vector += coefs[i] * normalized_gis[:, pc]
+
 
     return result_vector
 
-def combine_pc_vectors(df, gis, save_dir):
+def combine_pc_vectors(gis, coeffs, save_dir):
+    """
+    Linearly combine the principal component vectors in GIS using logistic regression coefficients.
+
+    Args:
+        df: Dataframe with the scores of normal and disease subjects to fit logistic regression
+        gis: 2D numpy array of component vectors (n_voxels, n_selected_components)
+        save_dir: directory where to save the results
+
+    Returns:
+        combined_pattern: 1D numpy array of the combined pattern (n_voxels,)
+    """
+
+
+    # Normalize the gis matrix
+    normalized_gis = normalize_vectors(gis)
+
+    # Calculate the result for each combination
+    results = {}
+
+    all_combinations = coeffs.keys()
+
+    for combination in all_combinations:
+        if len(combination) > 1:
+            
+            result_vector = linearly_combine_vectors(normalized_gis, coeffs.get(combination), combination)
+            comb_name = "_".join(map(lambda x: str(x), combination))
+
+            np.save(save_dir + f'vectors/GIS_vector_PC_{comb_name}.npy', result_vector)
+
+            reshape_eigenvector_to_3d(result_vector, plot=False, save_name=f'nifti/PC_{comb_name}',
+                                    save_dir=save_dir)
+
+            results[comb_name] = result_vector
+
+    return results
+
+
+def combine_pc_vectors_roi(df, gis, roi_mask_file, save_dir):
     """
     Linearly combine the principal component vectors in GIS using logistic regression coefficients.
 
@@ -217,19 +264,10 @@ def combine_pc_vectors(df, gis, save_dir):
         comb_name = "_".join(map(lambda x: str(x), combination))
         #np.save(save_dir + f'/GIS_vector_PC_{comb_name}.npy', result_vector)
 
-        reshape_eigenvector_to_3d(result_vector, plot=False, save_name=f'PC_{comb_name}',
+        reshape_eigenvector_to_roi(result_vector, roi_mask_file=roi_mask_file, plot=True, save_name=f'PC_{comb_name}',
                                   save_dir=save_dir)
 
         results[comb_name] = result_vector
 
     return results
 
-
-# if __name__ == '__main__':
-#     a = ['a', 'b', 'c', 'd']
-#
-#     all_combinations = []
-#     for r in range(1, len(a) + 1):
-#         all_combinations.extend(combinations(a, r))
-#
-#     print(list(all_combinations))

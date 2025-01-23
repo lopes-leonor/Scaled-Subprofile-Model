@@ -1,19 +1,18 @@
 
-
 from argparse import ArgumentParser
+import os
 import numpy as np
 import nibabel as nb
 import pandas as pd
+import scipy.linalg as la
+import matplotlib.pyplot as plt
 
-from image_preprocess import preprocess
-from masking import mask_img
-from ssm_preprocess import convert_to_row_vector, create_group_matrix, transform_to_log, center_data_matrix, compute_subject_residual_profiles
-from pca_analysis import apply_pca, weight_score_vectors, compute_voxel_pattern_eigenvectors, calculate_vaf, plot_eigenvalues_vaf
-from voxel_pattern_analysis import z_transform_voxel_patterns, get_scores_discovery_set, reshape_eigenvector_to_3d
-
-from selecting_best_pc import best_aic, combine_pc_vectors, comparisons_scores_normal_disease
-
-from match_age_sex import match_age_sex_range
+from ssm_pca.image_preprocess import preprocess
+from ssm_pca.masking import create_grey_matter_mask
+from ssm_pca.pca import apply_pca, plot_eigenvalues_vaf
+from ssm_pca.visualization import display_gis
+from ssm_pca.utils import pc_scores_to_df
+from ssm_pca.selecting_best_pc import best_pc_combination, combine_pc_vectors, compare_scores_normal_disease
 
 
 def ssm_pca(filelist=None, labels=None, img_shape=(91,109,91), preprocess_img=True, mask_file=None, save_dir=None):
@@ -35,8 +34,35 @@ def ssm_pca(filelist=None, labels=None, img_shape=(91,109,91), preprocess_img=Tr
         gmp - group mean profile
     """
 
+    
+    n_subj = len(filelist)
+    print(f'Number of subjects: {n_subj}')
+    n_d = np.count_nonzero(labels)
+    print(f'Number of diseased subjects: {n_d}')
+    n_nc = n_subj - n_d
+    print(f'Number of normal controls: {n_nc}')
+
+    # Create save directories
+    vector_save_dir = save_dir + '/vectors'
+    os.makedirs(vector_save_dir, exist_ok=True)
+
+    nifti_save_dir = save_dir + '/nifti'
+    os.makedirs(nifti_save_dir, exist_ok=True)
+
+    plots_save_dir = save_dir + '/plots'
+    os.makedirs(plots_save_dir, exist_ok=True)
+
+
+    # Load mask
+    if mask_file:
+        if type(mask_file) == float:
+            mask = create_grey_matter_mask(filelist, threshold=float(mask_file), save_name=save_dir + '/threshold_mask.nii')
+        else:
+            mask = nb.load(mask_file).get_fdata()
+
     row_vectors_list = []
 
+    # Load images and create row vectors
     for filepath in filelist:
         img = nb.load(filepath)
         array = img.get_fdata()
@@ -45,96 +71,144 @@ def ssm_pca(filelist=None, labels=None, img_shape=(91,109,91), preprocess_img=Tr
         if preprocess_img:
             array = preprocess(array)
 
-        # Mask with given file
+        # Mask with loaded mask
         if mask_file:
-            array = mask_img(array, mask_file=mask_file)
+            array = array * mask
 
         # Convert the array to a row vector
-        row_vector = convert_to_row_vector(array)
+        row_vector = array.flatten()
 
         row_vectors_list.append(row_vector)
 
+    print('Creating group matrix...')
     # Create group matrix
-    D = create_group_matrix(row_vectors_list)
+    subj_matrix = np.vstack(row_vectors_list)
 
-    # Log transform group matrix
-    log_data_matrix = transform_to_log(D)
+    # Get mask in row format for later use
+    mask_row = mask.flatten()
+
+    # # Change the mask so that 0 value of each subject is removed
+    # for i in range(subj_matrix.shape[0]):
+    #     mask_row = mask_row*(subj_matrix[i, :] > 0)
+
+    mask_sum = np.sum(mask_row) # Number of voxels in the mask
+
+    # # Mask the subject matrix
+    # for i in range(subj_matrix.shape[0]):
+    #     subj_matrix[i, :] = subj_matrix[i, :]*mask_row
+
+    # Replace all values <= 0 with 1 (to be able to do the log)
+    subj_matrix[subj_matrix <= 0] = 1
+
+    print('Log transforming data...')
+    # Log transform the data
+    log_data_matrix = np.log(subj_matrix)
 
     # Center the data matrix (subtract the row means). Get GMP - column means.
-    centered_data_matrix, gmp = center_data_matrix(log_data_matrix)
+    subject_means = np.sum(subj_matrix, axis=0)/mask_sum
+    centered_data_matrix = log_data_matrix - subject_means[:, np.newaxis]
+
+    # Mask again
+    centered_data_matrix = centered_data_matrix * mask_row
+  
+    print('Computing SRP...')
+    # Compute subject residual profiles (SRP) - subtract column means
+    voxels_means = np.mean(centered_data_matrix, axis=0, keepdims=True)
+    subject_residual_profiles = centered_data_matrix - voxels_means 
 
     if save_dir:
-        np.save(save_dir + '/group_mean_profile.npy', gmp)
-
-    # Compute subject residual profiles (SRP) - subtract column means
-    subject_residual_profiles = compute_subject_residual_profiles(centered_data_matrix, gmp)
+        np.save(vector_save_dir + '/group_mean_profile.npy', voxels_means)
+  
+    # Mask again 
+    subject_residual_profiles = subject_residual_profiles * mask_row
 
     # Compute subject-by-subject covariance matrix
-    covariance_matrix = np.dot(subject_residual_profiles, subject_residual_profiles.T)
+    covariance_matrix = subject_residual_profiles @ subject_residual_profiles.T
 
+    print('Appliying PCA...')
     # Apply PCA to the covariance matrix
-    score_vectors, eigenvectors, eigenvalues = apply_pca(covariance_matrix)
+    score_vectors, eigVal, vaf = apply_pca(covariance_matrix)
 
-    # Calculate the variance accounted for (vaf) by each component
-    vaf = calculate_vaf(eigenvalues)
+    if save_dir:
+        np.save(vector_save_dir + f'/score_vectors.npy', score_vectors)
 
     if save_dir:
         # Plot the variance accounted for (vaf) by each component
-        plot_eigenvalues_vaf(eigenvalues, vaf)
+        plot_eigenvalues_vaf(eigVal, vaf)    
 
-    # Weight each score vector by the square root of its corresponding eigenvalue
-    weighted_score_vectors = weight_score_vectors(eigenvalues, score_vectors)
+    # GIS vector and its negative form are mathematically equivalent solutions of the eigenvector equation 
+    # with a corresponding sign flip of associated subject scores. 
+    # Only the GIS form corresponding to positive mean patient scores 
+    # relative to normal subject scores is considered to be relevant.
 
+    print('Changing sign of scores if needed...')
+    # Flip signs of SSFs if needed
+    if n_nc > 0:
+        for i in range(len(eigVal)):
+            mean_nc = np.mean(score_vectors[:n_nc, i])
+            mean_disease = np.mean(score_vectors[n_nc:, i])
+            if mean_nc > mean_disease:
+                print(f'change sign of PC: {i}')
+                score_vectors[:, i] *= -1
+
+    print('Computing GIS...')
     # Compute voxel pattern eigenvectors or GIS
-    gis = compute_voxel_pattern_eigenvectors(subject_residual_profiles, weighted_score_vectors)
-    z_transf_gis = z_transform_voxel_patterns(gis)
+    gis = subject_residual_profiles.T @ score_vectors
+
+    print('Z-transforming GIS...')
+    # Z-transform the GIS
+    for i in range(n_subj):
+        mean = np.sum(gis[:, i]) / mask_sum
+        std = np.std(gis[gis[:, i] != 0, i])
+        gis[:, i] = (gis[:, i] - mean) / std
+
+    # Mask the GIS
+    gis = gis * mask_row[:, np.newaxis]
 
     if save_dir:
-        np.save(save_dir + f'/GIS_matrix.npy', z_transf_gis)
+        np.save(vector_save_dir + f'/GIS.npy', gis)
 
-    return z_transf_gis, gis, vaf, gmp
+    return gis, score_vectors, vaf, voxels_means
 
 
-def display_save_individual_PC(z_transf_gis, gis, vaf, gmp, img_shape=(91,109,91), mask_file=None, save_dir=None):
-
+def pattern_biomarker_analysis(gis, score_vectors, vaf, filelist, labels, img_shape=(91,109,91), save_dir=None):
+    
     all_score_dfs = []
 
-    # Display and save the GIS of each PC with Vaf > 5%
+    print('Analysing PC scores (NC and disease comparisons)...')
     for pc, vaf_pc in enumerate(vaf):
         if vaf_pc > 5:
-            z_transf_gis_pc = z_transf_gis[:, pc]
-            if save_dir:
-                np.save(save_dir + f'/GIS_vector_PC{pc}.npy', z_transf_gis_pc)
-
-            df = get_scores_discovery_set(filelist, labels, mask_file, z_transf_gis_pc, pc, gmp, save_dir)
+            display_gis(gis, pc, img_shape, save_dir) # Display GIS in image format
+            df = pc_scores_to_df(score_vectors, pc, filelist, labels) #Put current PC scores into a dataframe
+            p = compare_scores_normal_disease(df, pc, labels, save_dir) #Plot comparisons between normal controls and diseased in this PC
             all_score_dfs.append(df)
-            save_name = f'PC_{pc}.nii'
-            reshape_eigenvector_to_3d(z_transf_gis_pc, img_shape, plot=False, save_name=save_name, save_dir=save_dir)
+    
+    df_all_scores = pd.concat(all_score_dfs)
+
+    all_pcs = list(df_all_scores['PC'].unique())
+
+    print('Comparing all PC combinations...')
+    # Logistic regression to find the best combination of PCs
+    df_aic, df_vafs, df_p, df_all_scores, coefs = best_pc_combination(df_all_scores, vaf, save_dir)
 
 
-    df_final_individual = pd.concat(all_score_dfs)
-    if save_dir:
-        df_final_individual.to_csv(save_dir + '/scores_individual_PC.csv')
+    print('Combining PC vectors...')
+    results = combine_pc_vectors(gis, coefs, save_dir)
 
-    df_aic = best_aic(df_final_individual)
+    df_all_scores.to_csv(save_dir + '/scores.csv')
 
+    
     if save_dir:
         df_aic.to_csv(save_dir + '/AIC.csv')
+
+    print('AIC:\n')
     print(df_aic.to_string())
+    
+    print('Vaf:\n')
+    print(df_vafs.to_string())
 
-    # Get dictionary of combination (ex: 1_2_3) to corresponding gis vector
-    combined_gis = combine_pc_vectors(df_final_individual, gis, save_dir)
-
-    for pc_comb, gis_pc in combined_gis.items():
-        pc_comb_name = f'PC_{pc_comb}'
-        df = get_scores_discovery_set(filelist, labels, mask_file, gis_pc, pc_comb_name, gmp, save_dir)
-        all_score_dfs.append(df)
-
-    df_final = pd.concat(all_score_dfs)
-
-    df_final.to_csv(save_dir + '/scores.csv')
-
-    comparisons_scores_normal_disease(df_final, save_dir)
+    print('P-values:\n')
+    print(df_p.to_string())
 
 
 
@@ -144,8 +218,8 @@ if __name__ == '__main__':
     # Parse config file path
     parser = ArgumentParser()
     parser.add_argument("--csv_file", type=str, help='CSV file with filepaths and corresponding labels of normal controls (0) or diseased subjects (1). Columns should be filepaths and labels.')
-    parser.add_argument("--mask_file", type=str, help='Path to the file where is stores the brain mask binary file.')
-    parser.add_argument("--image_shape", type=tuple, help='Image shape to reconstruct back the PC pattern images. Default is the MNI brain space dimensions',
+    parser.add_argument("--mask_file", type=str, help='Path to a binary brain mask file to apply to the images.')
+    parser.add_argument("--image_shape", type=tuple, help='Image shape to reconstruct back the PC pattern images. Default is the MNI brain space dimensions.',
                         default=(91, 109, 91))
     parser.add_argument("--preprocess_img", type=bool, help='Whether to preprocess the image.')
     parser.add_argument("--save_dir", type=str, help='Directory path where to save the results files.')
@@ -157,15 +231,10 @@ if __name__ == '__main__':
     filelist = list(df['filepaths'])
     labels = list(df['labels'])
 
-    
-    z_transf_gis, gis, vaf, gmp = ssm_pca(filelist=args.filelist, labels=args.labels,
-                                           mask_file=args.mask_file, img_shape=args.image_shape,
-                                           preprocess_img=args.preprocess_img, save_dir=args.save_dir)
 
+    gis, score_vectors, vaf, voxels_means = ssm_pca(filelist, labels, img_shape=args.image_shape,
+                                    mask_file=args.mask_file,
+                                    save_dir=args.save_dir)
 
-    display_save_individual_PC(z_transf_gis, gis, vaf, gmp, mask_file=args.mask_file,
-                                      save_dir=args.save_dir)
-
-
-
-
+    pattern_biomarker_analysis(gis, score_vectors, vaf, filelist, labels, img_shape=args.image_shape, 
+                            save_dir=args.save_dir)

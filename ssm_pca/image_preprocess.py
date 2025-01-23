@@ -3,10 +3,11 @@ import numpy as np
 import nibabel as nib
 
 
-def preprocess(array, ref_region_mask_file='/home/leonor/Code/masks/SPM_masks/brainmask.nii'):
+def preprocess(array, to_mni_space=True, ref_region_mask_file='/Users/leonorlopes/Documents/data/masks/SPM_masks/brainmask.nii'):
     """Function to normalize the images by dividing by the whole brain uptake."""
 
-    array = np.pad(array, ((6, 6), (7, 7), (11, 11)))
+    if to_mni_space:
+        array = np.pad(array, ((6, 6), (7, 7), (11, 11)))
 
     array = np.float64(array)
     mask = nib.load(ref_region_mask_file).get_fdata()

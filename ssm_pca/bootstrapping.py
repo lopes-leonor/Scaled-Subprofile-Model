@@ -3,8 +3,8 @@ import os.path
 import pandas as pd
 import numpy as np
 from sklearn.utils import resample
-from main import ssm_pca
-from visualization import plot_mri_pet, plot_several_axes_image_array
+from ssm_pca.main_old import ssm_pca
+from ssm_pca.visualization import plot_mri_pet, plot_several_axes_image_array
 from tqdm import tqdm
 import glob
 import nibabel as nib

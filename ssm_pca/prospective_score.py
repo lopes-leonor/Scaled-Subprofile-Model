@@ -1,18 +1,60 @@
-import glob
-import os
+
+from argparse import ArgumentParser
 import numpy as np
 import pandas as pd
 import nibabel as nb
-import matplotlib.pyplot as plt
-from scipy.stats import ttest_ind
-from sklearn.metrics import roc_auc_score, RocCurveDisplay
 
-from masking import mask_img
-from ssm_preprocess import transform_to_log
-from visualization import plot_comparisons
+from ssm_pca.image_preprocess import preprocess
+from ssm_pca.masking import mask_img
+from ssm_pca.get_rois import get_rois
 
 
 def tpr(filepath, mask_file, gis_pc, group_mean_profile, to_mni_space=True):
+    """
+    Returns:
+        object:
+    """
+    img = nb.load(filepath)
+    array = img.get_fdata()
+
+    array = preprocess(array, to_mni_space=to_mni_space)
+    
+    mask = nb.load(mask_file).get_fdata()
+
+    # Get mask in row format
+    mask_row = mask.flatten()
+
+    # Mask with given file
+    #array = mask_img(array, mask_file=mask_file)
+    array = array * mask
+
+    vector = array.flatten()
+
+    # Change the mask so that 0 value of subject is removed   
+    mask_row = mask_row*(vector > 0)
+    mask_sum = np.sum(mask_row)
+
+    # Replace all values <= 0 with 1 (to be able to do the log)
+    vector[vector <= 0] = 1
+
+    # Log transform vector
+    log_vector = np.log(vector)
+
+    # Subtract mean of subject
+    subject_mean = np.mean(vector)
+    centered_vector = log_vector - subject_mean
+
+    # Mask again
+    centered_vector = mask_row * centered_vector
+
+    # Compute subject residual profiles (SRP) - subtract group mean profile
+    srp = centered_vector - group_mean_profile
+
+    score = np.dot(srp, gis_pc)
+
+    return srp, score
+
+def tpr_roi(filepath, mask_file, roi_mask_file, gis_pc, group_mean_profile, to_mni_space=True):
     """
 
     Returns:
@@ -25,15 +67,20 @@ def tpr(filepath, mask_file, gis_pc, group_mean_profile, to_mni_space=True):
         array = np.pad(array, ((6, 6), (7, 7), (11, 11)))
 
     array = mask_img(array, mask_file=mask_file)
+
+    roi_mask = nb.load(roi_mask_file).get_fdata()
+
+    array, labels = get_rois(array, rois_mask=roi_mask)
+
     array = array / np.mean(array)
     # array = (array - np.mean(array)) / np.std(array)
 
     # Log transform group matrix
-    array = transform_to_log(array)
+    array = np.log(array)
 
     subject_mean = np.mean(array)
 
-    vector = array.flatten()
+    vector = array
 
     srp = vector - subject_mean - group_mean_profile
 
@@ -42,10 +89,11 @@ def tpr(filepath, mask_file, gis_pc, group_mean_profile, to_mni_space=True):
     return srp, score
 
 
-def prospective_score(filelist, mask_file, gis_pc_file, group_mean_profile_file, mean_normals=None, to_mni_space=True, save_dir=None):
+def prospective_scores(filelist, mask_file, gis_pc_file, group_mean_profile_file, mean_normals_file, to_mni_space=True, save_dir=None):
 
     gis_pc = np.load(gis_pc_file)
     gmp = np.load(group_mean_profile_file)
+    mean_normals = np.load(mean_normals_file)
     scores = []
 
     for filepath in filelist:
@@ -67,40 +115,23 @@ def prospective_score(filelist, mask_file, gis_pc_file, group_mean_profile_file,
 
 
 if __name__ == '__main__':
+    #Parse config file path
 
-    df = pd.read_excel('/home/leonor/Code/RBD_model_comparison/data/huashan_RBD_FDG_DAT_data_info_2024.xlsx')
-    #data_dir = '/home/leonor/Data/RBD_project/rbd_data/sn_spm/'
+    parser = ArgumentParser()
+    parser.add_argument("--csv_file", type=str, help='CSV file with filepaths and corresponding labels of normal controls (0) or diseased subjects (1). Columns should be filepaths and labels.')
+    parser.add_argument("--mask_file", type=str, help='Path to a binary brain mask file to apply to the images.')
+    parser.add_argument("--gis_pc_file", type=str, help='Path to the GIS pattern (.npy) you want to get the scores from.')
+    parser.add_argument("--gmp", type=str, help='Path to the group mean profile file (.npy).')
+    parser.add_argument("--mean_normals_file", type=str, help='Path to the mean of control group (.npy).')
+    parser.add_argument("--save_dir", type=str, help='Directory path where to save the results files.')
+    
+    args = parser.parse_args()
+    
+    df = pd.read_csv(args.csv_file)
 
-    # Exclude some patients
+    filelist = list(df['filepaths'])
 
-    df = df[df['no scan available_fdg'] == 0]
-    #df = df[df['scans after conversion'] == 0]
 
-    gis_pc = np.load('/home/leonor/Code/ssm_pca/results/run4_186_definite_pd_186_hc/GIS_vector_PC0.npy')
-    group_mean_profile = np.load('/home/leonor/Code/ssm_pca/results/run4_186_definite_pd_186_hc/group_mean_profile.npy')
-    scores = []
-
-    for filepath in df['img_paths_fdg']:
-
-        if filepath is not None:
-            #file = data_dir + os.path.basename(filepath)
-
-            srp, score = tpr(filepath, mask_file='/home/leonor/Code/masks/SPM_masks/grey_binary_prob25perc.nii',
-                        gis_pc=gis_pc , group_mean_profile=group_mean_profile, to_mni_space=False)
-        else:
-            score = ''
-
-        scores.append(score)
-
-    # Z-score transformation
-    scores_z = (np.array(scores) - np.mean(scores)) / np.std(scores)
-
-    mean_normals = np.load('/home/leonor/Code/ssm_pca/results/run4_186_definite_pd_186_hc/mean_nc.npy')
-    print(mean_normals)
-
-    scores_z = scores_z - mean_normals
-
-    df['PC_scores'] = scores_z
-
-    df.to_excel('/home/leonor/Code/ssm_pca/results/run4_186_definite_pd_186_hc/RBD_results_run4_PC0.xlsx')
-
+    prospective_scores(filelist, mask_file=args.mask_file, gis_pc_file=args.gis_pc_file, group_mean_profile_file=args.gmp, 
+                      mean_normals_file=args.mean_normals_file, to_mni_space=True, save_dir=args.save_dir)
+ 

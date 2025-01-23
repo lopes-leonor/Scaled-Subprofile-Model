@@ -3,30 +3,33 @@ import numpy as np
 import nibabel as nb
 
 
-def mask_img(img, mask_file):
+def mask_img(img, mask_file=None, mask=None):
     """ Apply mask to image"""
-    mask = nb.load(mask_file).get_fdata()
+    if mask is None:
+        mask = nb.load(mask_file).get_fdata()
+        
     img_masked = img * mask
     return img_masked
 
-def create_grey_matter_mask(file_list, threshold=0.38, img_preprocess=None, save_name=None):
+def create_grey_matter_mask(filelist, threshold=0.38, img_preprocess=None, to_mni_space=True, save_name=None):
 
     # Assuming all files in the directory are NIfTI files
-    images = []
-    for filename in file_list:
-        img = nb.load(filename)
-        array = img.get_fdata()
-        if img_preprocess:
-            array = img_preprocess(array)
-        images.append(array)
-
-    # Create individual masks
     individual_masks = []
 
-    for img_data in images:
-        max_value = np.max(img_data)
-        mask = (img_data >= threshold * max_value).astype(int)
+    for filename in filelist:
+        img = nb.load(filename)
+        array = img.get_fdata()
+
+        if img_preprocess:
+            array = img_preprocess(array)
+
+        if to_mni_space:
+            array = np.pad(array, ((6, 6), (7, 7), (11, 11)))
+
+        max_value = np.max(array)
+        mask = (array >= threshold * max_value).astype(int)
         individual_masks.append(mask)
+
 
     # Multiply all individual masks together
     multiplicative_mask = np.ones_like(individual_masks[0])

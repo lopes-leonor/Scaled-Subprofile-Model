@@ -32,6 +32,8 @@ def match_age_sex_range(df_patients, df_controls, age_range=5, age_col='age', se
                 matched_controls.append(matched_control)
                 # Remove the matched control from the available_controls DataFrame
                 available_controls = available_controls.drop(matched_control.index)
+            else:
+                print(f'No matching control found for patient {index} with age {patient[age_col]}')
 
         except ValueError as e:
             print(e)
