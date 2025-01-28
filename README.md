@@ -39,7 +39,7 @@ pip install ssm-pca
 Using the Command Line:
 
 ```bash
-python -m ssm_pca --csv_file "data.csv" --mask_file "brain_mask.nii" --save_dir "results/" --image_shape "(91,109,91)" --preprocess_img True
+python -m ssm_pca.main --csv_file "data.csv" --mask_file "brain_mask.nii" --save_dir "results/" --image_shape "(91,109,91)" --preprocess_img True
 
 ```
 
@@ -53,21 +53,19 @@ from ssm_pca import ssm_pca, display_save_individual_PC
 filelist = ["control.nii", "disease.nii"]
 labels = [0, 1]
 
-
 # Apply SSM-PCA in list of images and labels   
-z_transf_gis, gis, vaf, gmp = ssm_pca(
-    filelist = filelist, 
-    labels = labels,
-    mask_file = "brain_mask.nii", 
-    img_shape = (91, 109, 91),
-    preprocess_img = True, 
-    save_dir = "results/")
+gis, score_vectors, vaf, voxels_means = ssm_pca(
+    filelist=filelist, 
+    labels=labels,
+    preprocess_img=True,
+    mask_file="brain_mask.nii",
+    save_dir="results/")
 
 # Display and save the GIS - spatial covariance patterns - corresponding to each PC (with Vaf > 5%)
-display_save_individual_PC(
-    z_transf_gis, gis, vaf, gmp, 
-    mask_file = "brain_mask.nii",
-    save_dir = "results/")
+pattern_biomarker_analysis(gis, score_vectors, vaf, filelist, labels, 
+    img_shape=(91, 109, 91), 
+    save_dir="results/")
+
 
 ```
 
@@ -75,7 +73,7 @@ display_save_individual_PC(
 | Parameter         | Description                                                        |
 |-------------------|--------------------------------------------------------------------|
 | `--csv_file`      | CSV file with filepaths and corresponding labels of normal controls (0) or diseased subjects (1). Columns should be filepaths and labels.                 |
-| `--mask_file`     | Path to a binary mask file to apply to the images.                |
+| `--mask_file`     | Path to a binary mask file to apply to the images or threshold float to create meask                |
 | `--save_dir`      | Directory to save the results.                                    |
 | `--image_shape`   | Image shape to reconstruct back the PC pattern images. Default is the MNI brain space dimensions                      |
 | `--preprocess_img`| Whether to preprocess the images - intensity normalization (True or False).                 |
