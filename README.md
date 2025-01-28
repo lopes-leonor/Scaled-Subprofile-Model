@@ -47,7 +47,7 @@ Using Python Code:
 
 ```bash
 
-from ssm_pca import ssm_pca, display_save_individual_PC
+from ssm_pca.main import ssm_pca, pattern_biomarker_analysis
 
 # Define file paths and labels
 filelist = ["control.nii", "disease.nii"]
