@@ -10,24 +10,6 @@ from matplotlib.colors import Normalize, to_rgba
 
 
 
-def display_gis(gis, pc, img_shape, save_dir=None):
-    """Reshape the GIS vector into image format and plots it.
-
-    Args:
-        gis: GIS matrix.
-        pc: Index of the GIS vector to display.
-        save_dir: Directory to save the results. If None, results are not saved. Defaults to None.
-    """
-    save_name = f'PC_{pc}.nii'
-
-    gis_pc = gis[:, pc]
-
-    if save_dir:
-        np.save(save_dir + f'vectors/GIS_PC{pc}.npy', gis_pc)
-
-    reshape_eigenvector_to_3d(gis_pc, img_shape, plot=False, save_name=save_name, save_dir=save_dir + '/nifti/')
-
-
 def plot_comparisons(data1, data2, label1, label2, pc, save_dir=None):
     # Perform t-test
     t_stat, p_value = ttest_ind(data1, data2)
@@ -255,15 +237,3 @@ def plot_2_img(pet, mri, cmap1='viridis', cmap2='viridis', norm1=None, norm2=Non
     plt.axis("off")
     plt.show()
 
-if __name__ == '__main__':
-
-    array = nib.load('/home/leonor/Code/ssm_pca/results/run4_186_definite_pd_186_hc/PC_0.nii').get_fdata()
-    mri = nib.load('/home/leonor/Code/masks/SPM_masks/T1.nii').get_fdata()
-
-
-    #array = np.where((array > 1) | (array < -1), array, 0)
-
-
-    plot_several_axes_image_array(array, cmap='jet', rotations=(90, 90, 90), slice_idxs=(32, 53, 45))
-
-    #plot_mri_pet(mri, array)

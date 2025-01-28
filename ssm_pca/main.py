@@ -10,21 +10,19 @@ import matplotlib.pyplot as plt
 from ssm_pca.image_preprocess import preprocess
 from ssm_pca.masking import create_grey_matter_mask
 from ssm_pca.pca import apply_pca, plot_eigenvalues_vaf
-from ssm_pca.visualization import display_gis
-from ssm_pca.utils import pc_scores_to_df
+from ssm_pca.utils import pc_scores_to_df, display_gis
 from ssm_pca.selecting_best_pc import best_pc_combination, combine_pc_vectors, compare_scores_normal_disease
 
 
-def ssm_pca(filelist=None, labels=None, img_shape=(91,109,91), preprocess_img=True, mask_file=None, save_dir=None):
+def ssm_pca(filelist=None, labels=None, preprocess_img=True, mask_file=None, save_dir=None):
 
     """ Main function to run Scaled Subprofile Model with Principal Component Analysis on the images on filelist.
 
     Args:
         filelist: List with paths to the images to use. Defaults to None.
         labels: List to the labels corresponding to the images. Defaults to None.
-        img_shape: Shape of images. Defaults to (91,109,91).
         preprocess_img: Whether to preprocess the images. Defaults to True.
-        mask_file: Path to a mask file to mask the images. If None, no mask is applied Defaults to None.
+        mask_file: Path to a mask file to mask the images or threshold to create mask. If None, no mask is applied Defaults to None.
         save_dir: Directory to save the results. If None, results are not saved. Defaults to None.
 
     Returns:
@@ -86,16 +84,7 @@ def ssm_pca(filelist=None, labels=None, img_shape=(91,109,91), preprocess_img=Tr
 
     # Get mask in row format for later use
     mask_row = mask.flatten()
-
-    # # Change the mask so that 0 value of each subject is removed
-    # for i in range(subj_matrix.shape[0]):
-    #     mask_row = mask_row*(subj_matrix[i, :] > 0)
-
     mask_sum = np.sum(mask_row) # Number of voxels in the mask
-
-    # # Mask the subject matrix
-    # for i in range(subj_matrix.shape[0]):
-    #     subj_matrix[i, :] = subj_matrix[i, :]*mask_row
 
     # Replace all values <= 0 with 1 (to be able to do the log)
     subj_matrix[subj_matrix <= 0] = 1
@@ -105,7 +94,8 @@ def ssm_pca(filelist=None, labels=None, img_shape=(91,109,91), preprocess_img=Tr
     log_data_matrix = np.log(subj_matrix)
 
     # Center the data matrix (subtract the row means). Get GMP - column means.
-    subject_means = np.sum(subj_matrix, axis=0)/mask_sum
+    subject_means = np.sum(log_data_matrix, axis=1)/mask_sum
+
     centered_data_matrix = log_data_matrix - subject_means[:, np.newaxis]
 
     # Mask again
@@ -200,6 +190,8 @@ def pattern_biomarker_analysis(gis, score_vectors, vaf, filelist, labels, img_sh
     
     if save_dir:
         df_aic.to_csv(save_dir + '/AIC.csv')
+        df_p.to_csv(save_dir + '/p_values.csv')
+        df_vafs.to_csv(save_dir + '/VAFs.csv')
 
     print('AIC:\n')
     print(df_aic.to_string())
@@ -218,7 +210,7 @@ if __name__ == '__main__':
     # Parse config file path
     parser = ArgumentParser()
     parser.add_argument("--csv_file", type=str, help='CSV file with filepaths and corresponding labels of normal controls (0) or diseased subjects (1). Columns should be filepaths and labels.')
-    parser.add_argument("--mask_file", type=str, help='Path to a binary brain mask file to apply to the images.')
+    parser.add_argument("--mask_file", help='Path to a binary brain mask file to apply to the images or threshold to create mask.')
     parser.add_argument("--image_shape", type=tuple, help='Image shape to reconstruct back the PC pattern images. Default is the MNI brain space dimensions.',
                         default=(91, 109, 91))
     parser.add_argument("--preprocess_img", type=bool, help='Whether to preprocess the image.')
@@ -232,7 +224,8 @@ if __name__ == '__main__':
     labels = list(df['labels'])
 
 
-    gis, score_vectors, vaf, voxels_means = ssm_pca(filelist, labels, img_shape=args.image_shape,
+    gis, score_vectors, vaf, voxels_means = ssm_pca(filelist, labels,
+                                    preprocess_img=args.preprocess_img,
                                     mask_file=args.mask_file,
                                     save_dir=args.save_dir)
 

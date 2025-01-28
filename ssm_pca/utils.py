@@ -62,6 +62,23 @@ def reshape_eigenvector_to_roi(voxel_pattern_vector, roi_mask_file, plot=False, 
     
     return reshaped_vector
 
+def display_gis(gis, pc, img_shape, save_dir=None):
+    """Reshape the GIS vector into image format and plots it.
+
+    Args:
+        gis: GIS matrix.
+        pc: Index of the GIS vector to display.
+        save_dir: Directory to save the results. If None, results are not saved. Defaults to None.
+    """
+    save_name = f'PC_{pc}.nii'
+
+    gis_pc = gis[:, pc]
+
+    if save_dir:
+        np.save(save_dir + f'vectors/GIS_vector_PC_{pc}.npy', gis_pc)
+
+    reshape_eigenvector_to_3d(gis_pc, img_shape, plot=False, save_name=save_name, save_dir=save_dir + '/nifti/')
+
 def pc_scores_to_df(score_vectors, pc, filepaths, labels):
     """Get the scores of the subjects for a given principal component.
 

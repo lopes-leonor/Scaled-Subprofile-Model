@@ -30,6 +30,7 @@ def apply_pca(covariance_matrix):
     sqrt_eigVal = np.tile(sqrt_eigVal, (eigVec.shape[0], 1))
 
     score_vectors = eigVec * sqrt_eigVal 
+
     # score_vectors is a matrix of (subjects x GIS)
     # Each column represents a weighted eigenvector (dominant pattern of variability across subjects). 
     # Each element of the vector represents how the subject contributes or aligns with this pattern.
@@ -67,53 +68,4 @@ def plot_eigenvalues_vaf(eigenvalues, vaf):
 
     plt.grid(False)
     plt.show(block=False)
-    #plt.close()
-
-
-# def weight_score_vectors(eigenvalues, score_vectors):
-#     """
-#     Weight each vector by multiplying by the square root of its corresponding eigenvalue.
-
-#     Args:
-#         eigenvalues: Eigenvalues of the subject-by-subject covariance matrix.
-#         score_vectors: Subject score eigenvectors. Projections of the original data points into the eigenvector space.
-
-#     Returns:
-#         weighted_score_vectors
-#     """
-
-#     weighted_score_vectors = score_vectors * np.sqrt(eigenvalues)
-#     return weighted_score_vectors
-
-# def compute_voxel_pattern_eigenvectors(subject_residual_profiles, weighted_score_vectors):
-#     """
-#     Compute voxel pattern eigenvectors using subject residual profiles (SRP) and PCA results.
-#     Each column vector represents a principal component (PC) image pattern of the SSM/PCA analysis.
-
-#     Args:
-#         subject_residual_profiles: Matrix of subject residual profiles (SRP).
-#         weighted_score_vectors: Weighted subject score eigenvectors.
-
-#     Returns:
-#         voxel_pattern_eigenvectors: Voxel pattern eigenvectors, corresponding to principal component (PC) image patterns
-#         or GIS
-#     """
-#     voxel_pattern_eigenvectors = np.dot(subject_residual_profiles.T, weighted_score_vectors)
-
-#     return voxel_pattern_eigenvectors
-
-
-# def calculate_vaf(eigenvalues):
-#     """
-#     Calculate the percent variance accounted for by each principal component (PC).
-#     Args:
-#         eigenvalues: Eigenvalues of the subject-by-subject covariance matrix.
-
-#     Returns:
-#         vaf: percent variance accounted for
-
-#     """
-#     total_variance = np.sum(eigenvalues)
-#     vaf = 100 * (eigenvalues / total_variance)
-#     return vaf
 

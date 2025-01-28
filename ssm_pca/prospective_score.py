@@ -6,7 +6,8 @@ import nibabel as nb
 
 from ssm_pca.image_preprocess import preprocess
 from ssm_pca.masking import mask_img
-from ssm_pca.get_rois import get_rois
+from notebooks.get_rois import get_rois
+from ssm_pca.selecting_best_pc import normalize_vectors
 
 
 def tpr(filepath, mask_file, gis_pc, group_mean_profile, to_mni_space=True):
@@ -41,7 +42,7 @@ def tpr(filepath, mask_file, gis_pc, group_mean_profile, to_mni_space=True):
     log_vector = np.log(vector)
 
     # Subtract mean of subject
-    subject_mean = np.mean(vector)
+    subject_mean = np.sum(log_vector)/mask_sum
     centered_vector = log_vector - subject_mean
 
     # Mask again
@@ -49,6 +50,11 @@ def tpr(filepath, mask_file, gis_pc, group_mean_profile, to_mni_space=True):
 
     # Compute subject residual profiles (SRP) - subtract group mean profile
     srp = centered_vector - group_mean_profile
+
+    # Mask again
+    srp = mask_row * srp
+
+    gis_pc = normalize_vectors(gis_pc)
 
     score = np.dot(srp, gis_pc)
 
@@ -73,7 +79,6 @@ def tpr_roi(filepath, mask_file, roi_mask_file, gis_pc, group_mean_profile, to_m
     array, labels = get_rois(array, rois_mask=roi_mask)
 
     array = array / np.mean(array)
-    # array = (array - np.mean(array)) / np.std(array)
 
     # Log transform group matrix
     array = np.log(array)
@@ -89,29 +94,45 @@ def tpr_roi(filepath, mask_file, roi_mask_file, gis_pc, group_mean_profile, to_m
     return srp, score
 
 
-def prospective_scores(filelist, mask_file, gis_pc_file, group_mean_profile_file, mean_normals_file, to_mni_space=True, save_dir=None):
+def prospective_scores(filelist, pc, mask_file, gis_pc_file, group_mean_profile_file, csv_scores, labels=None, to_mni_space=True, save_dir=None):
 
     gis_pc = np.load(gis_pc_file)
     gmp = np.load(group_mean_profile_file)
-    mean_normals = np.load(mean_normals_file)
+    df_scores_deriv = pd.read_csv(csv_scores)
+
     scores = []
 
     for filepath in filelist:
         _, score = tpr(filepath, mask_file, gis_pc, gmp, to_mni_space)
         scores.append(score)
 
-    # Z-score transformation
-    scores_z = (np.array(scores) - np.mean(scores)) / np.std(scores)
+    # Read derivation scores and Z-transform them 
+    df_pc = df_scores_deriv[df_scores_deriv['PC'] == pc]
 
-    # Offset by controls mean
-    if mean_normals:
-        scores_z = scores_z - mean_normals
+    scores_der = df_pc['scores'].to_numpy()
+    labels_der = df_pc['labels'].to_numpy()
+
+    scores_der_z = (np.array(scores_der) - np.mean(scores_der, axis=0)) / np.std(scores_der, axis=0, ddof=1)
+    controls_mean = np.mean(scores_der_z[labels_der == 0])
+
+    # Use the same mean, std and controls mean to Z-transform the prospective scores
+    scores_z = (np.array(scores) - np.mean(scores_der, axis=0)) / np.std(scores_der, axis=0, ddof=1)
+    scores_z = scores_z - controls_mean
+    scores_z = scores_z.flatten()
+    #print(scores_z)
+    #print(scores_z.flatten())
 
     if save_dir:
         # Save the scores into a dataframe
-        data = {'filepaths': filelist, 'scores': scores_z}
+        if labels:
+            data = {'filepaths': filelist, 'labels': labels, 'scores': scores_z, 'PC': pc}
+        else:
+            data = {'filepaths': filelist, 'scores': scores_z, 'PC': pc}
+            
         df = pd.DataFrame(data)
-        df.to_csv(save_dir + '/scores_prospective.csv')
+        df.to_csv(save_dir + f'/scores_prospective_pc_{pc}.csv')
+
+    return scores_z, df
 
 
 if __name__ == '__main__':
@@ -121,8 +142,8 @@ if __name__ == '__main__':
     parser.add_argument("--csv_file", type=str, help='CSV file with filepaths and corresponding labels of normal controls (0) or diseased subjects (1). Columns should be filepaths and labels.')
     parser.add_argument("--mask_file", type=str, help='Path to a binary brain mask file to apply to the images.')
     parser.add_argument("--gis_pc_file", type=str, help='Path to the GIS pattern (.npy) you want to get the scores from.')
-    parser.add_argument("--gmp", type=str, help='Path to the group mean profile file (.npy).')
-    parser.add_argument("--mean_normals_file", type=str, help='Path to the mean of control group (.npy).')
+    parser.add_argument("--gmp", type=str, help='Path to the group mean profile file (.npy) of discovery set.')
+    parser.add_argument("--csv_scores", type=str, help='Path to the scores of discovery set.')
     parser.add_argument("--save_dir", type=str, help='Directory path where to save the results files.')
     
     args = parser.parse_args()
@@ -133,5 +154,5 @@ if __name__ == '__main__':
 
 
     prospective_scores(filelist, mask_file=args.mask_file, gis_pc_file=args.gis_pc_file, group_mean_profile_file=args.gmp, 
-                      mean_normals_file=args.mean_normals_file, to_mni_space=True, save_dir=args.save_dir)
+                      csv_scores=args.csv_scores, to_mni_space=True, save_dir=args.save_dir)
  

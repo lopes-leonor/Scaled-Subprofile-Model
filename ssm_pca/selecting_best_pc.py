@@ -1,6 +1,7 @@
 
 from itertools import permutations, combinations
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.stats import ttest_ind
@@ -89,10 +90,13 @@ def best_pc_combination(df, vaf=None, save_dir=None):
 def compare_scores_normal_disease(df, pc, labels, save_dir=None):
     
     all_scores = df['scores'].to_numpy()
-    labels = np.array(labels)
+    labels = np.array(df['labels'])
 
     normal = df[df['labels'] == 0]['scores']
     disease = df[df['labels'] == 1]['scores']
+
+    if not os.path.exists(save_dir + f'plots/'):
+        os.makedirs(save_dir + f'plots/')
 
     #Do comparisons between normal controls and diseased
     _, p = ttest_ind(normal, disease)
@@ -101,6 +105,7 @@ def compare_scores_normal_disease(df, pc, labels, save_dir=None):
     auc = roc_auc_score(labels, all_scores)
     RocCurveDisplay.from_predictions(labels, all_scores, name=f'PC{pc} - AUC = {auc:3f}')
     plt.title(f'PC: {pc}')
+
 
     if save_dir:
         plt.savefig(save_dir + f'plots/ROC_PC{pc}.png')
@@ -148,25 +153,6 @@ def normalize_vectors(vectors):
     norms = np.linalg.norm(vectors, axis=0)
     normalized_vectors = vectors / norms
     return normalized_vectors
-
-
-def determine_coefficients(scores, labels):
-    """
-    Determine coefficients for linear combination using logistic regression.
-
-    Args:
-        scores: 1D numpy array of scores from one PC (n_samples, )
-        labels: 1D numpy array of class labels (n_samples,)
-
-    Returns:
-        coefficient: regression coefficient
-    """
-    logistic_model = LogisticRegression()
-    logistic_model.fit(scores, labels)
-    coefficient = logistic_model.coef_.flatten()
-    aic = compute_aic(logistic_model, scores, labels)
-
-    return coefficient, aic
 
 
 def linearly_combine_vectors(normalized_gis, coefs, combination):
