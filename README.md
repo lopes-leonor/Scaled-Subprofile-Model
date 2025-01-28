@@ -50,8 +50,8 @@ Using Python Code:
 from ssm_pca.main import ssm_pca, pattern_biomarker_analysis
 
 # Define file paths and labels
-filelist = ["control.nii", "disease.nii"]
-labels = [0, 1]
+filelist = ["control1.nii", "control2.nii", "disease1.nii", "disease2.nii"]
+labels = [0,0,1,1]
 
 # Apply SSM-PCA in list of images and labels   
 gis, score_vectors, vaf, voxels_means = ssm_pca(
@@ -69,6 +69,22 @@ pattern_biomarker_analysis(gis, score_vectors, vaf, filelist, labels,
 
 ```
 
+To calculate prospective scores in new dataset
+
+```bash
+# Define file paths and labels
+filelist = ["subj1.nii", "subj2.nii", "subj3.nii"]
+
+prospective_scores(
+    filelist=filelist, 
+    pc="0",
+    mask_file="brain_mask.nii", 
+    gis_pc_file="GIS_vector_PC_0.npy", # directory to the PC vector you want
+    group_mean_profile_file="group_mean_profile.npy", # group mean profile of the discovery set
+    csv_scores="scores.csv", # scores of the discovery set
+    to_mni_space=True, save_dir="results_prospective/")
+
+```
 
 | Parameter         | Description                                                        |
 |-------------------|--------------------------------------------------------------------|
